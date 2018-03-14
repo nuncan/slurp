@@ -1,6 +1,6 @@
 # slurp
-Enumerates S3 buckets manually or via certstream
-
+ Enumerate S3 buckets via certstream, domain, or keywords
+ 
 ## Overview
 - First of all, credit to https://github.com/eth0izzle/bucket-stream for the certstream idea.
 - Also, credit to all the vendor packages that made this tool possible.
