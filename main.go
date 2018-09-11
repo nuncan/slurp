@@ -185,7 +185,7 @@ func StreamCerts() {
 				log.Error(err2)
 			}
 
-			//log.Infof("Domain: %s", domain)
+			log.Infof("Domain: %s", domain)
 			//log.Info(jq)
 
 			dQ.Put(domain)
@@ -225,14 +225,16 @@ func ProcessQueue() {
 			}
 
 			if punyCfgDomain != cn[0].(string) {
-				log.Infof("%s is %s (punycode); AWS does not support internationalized buckets", cn[0].(string), punyCfgDomain)
-				continue
+				err := fmt.Sprintf("%s is (punycode); AWS does not support internationalized buckets", cn[0].(string))
+				log.Error(err)
 			}
 
-			dbQ.Put(d)
-		}
+			if err == nil {
+				dbQ.Put(d)
+			}
 
-		//log.Infof("CN: %s\tDomain: %s", cn[0].(string), domain)
+			log.Infof("CN: %s\tDomain: %s", cn[0].(string), d)
+		}
 	}
 }
 
@@ -246,7 +248,7 @@ func PermutateDomainRunner() {
 			continue
 		}
 
-		var d Domain = dstruct[0].(Domain)
+		var d = dstruct[0].(Domain)
 
 		//log.Infof("CN: %s\tDomain: %s.%s", d.CN, d.Domain, d.Suffix)
 
@@ -271,7 +273,7 @@ func PermutateKeywordRunner() {
 			continue
 		}
 
-		var d string = dstruct[0].(string)
+		var d = dstruct[0].(string)
 
 		//log.Infof("CN: %s\tDomain: %s.%s", d.CN, d.Domain, d.Suffix)
 
@@ -288,7 +290,7 @@ func PermutateKeywordRunner() {
 
 // CheckPermutations runs through all permutations checking them for PUBLIC/FORBIDDEN buckets
 func CheckPermutations() {
-	var max = runtime.NumCPU() * 10
+	var max = 10 * runtime.NumCPU()
 	sem = make(chan int, max)
 
 	for {
@@ -387,7 +389,7 @@ func CheckPermutations() {
 			}
 
 			checked = checked + 1
-
+			resp.Body.Close()
 			<-sem
 		}(dom[0].(PermutatedDomain))
 	}
@@ -618,7 +620,7 @@ func main() {
 		log.Info("Initializing....")
 		Init()
 
-		//go PrintJob()
+		go PrintJob()
 
 		log.Info("Starting to stream certs....")
 		go StreamCerts()
@@ -626,7 +628,7 @@ func main() {
 		log.Info("Starting to process queue....")
 		go ProcessQueue()
 
-		//log.Info("Starting to stream certs....")
+		log.Info("Starting to stream certs....")
 		go PermutateDomainRunner()
 
 		log.Info("Starting to process permutations....")
@@ -637,7 +639,7 @@ func main() {
 				break
 			}
 
-			time.Sleep(1 * time.Second)
+			time.Sleep(3 * time.Second)
 		}
 	case "DOMAIN":
 		Init()
