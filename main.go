@@ -28,13 +28,11 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/idna"
-
-	"github.com/CaliDog/certstream-go"
 	"github.com/Workiva/go-datastructures/queue"
 	"github.com/jmoiron/jsonq"
 	"github.com/joeguo/tldextract"
 	"github.com/spf13/cobra"
+	"golang.org/x/net/idna"
 )
 
 var exit bool
@@ -64,27 +62,15 @@ type Keyword struct {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "slurp",
-	Short: "slurp",
-	Long:  `slurp`,
+	Use: "slurp",
 	Run: func(cmd *cobra.Command, args []string) {
-		action = "NADA"
-	},
-}
-
-var certstreamCmd = &cobra.Command{
-	Use:   "certstream",
-	Short: "Uses certstream to find s3 buckets in real-time",
-	Long:  "Uses certstream to find s3 buckets in real-time",
-	Run: func(cmd *cobra.Command, args []string) {
-		action = "CERTSTREAM"
+		action = cobra.MousetrapHelpText
 	},
 }
 
 var domainCmd = &cobra.Command{
 	Use:   "domain",
-	Short: "Uses a list of domains to enumerate s3 buckets",
-	Long:  "Uses a list of domains to enumerate s3 buckets",
+	Short: "d",
 	Run: func(cmd *cobra.Command, args []string) {
 		action = "DOMAIN"
 	},
@@ -92,8 +78,7 @@ var domainCmd = &cobra.Command{
 
 var keywordCmd = &cobra.Command{
 	Use:   "keyword",
-	Short: "Uses a list of keywords to enumerate s3 buckets",
-	Long:  "Uses a list of keywords to enumerate s3 buckets",
+	Short: "k",
 	Run: func(cmd *cobra.Command, args []string) {
 		action = "KEYWORD"
 	},
@@ -104,8 +89,6 @@ var cfgKeywords []string
 var cfgDomains []string
 
 func setFlags() {
-	certstreamCmd.PersistentFlags().StringVarP(&cfgPermutationsFile, "permutations", "p", "./permutations.json", "Permutations file location")
-
 	domainCmd.PersistentFlags().StringSliceVarP(&cfgDomains, "target", "t", []string{}, "Domains to enumerate s3 buckets; format: example1.com,example2.com,example3.com")
 	domainCmd.PersistentFlags().StringVarP(&cfgPermutationsFile, "permutations", "p", "./permutations.json", "Permutations file location")
 
@@ -127,14 +110,6 @@ func PreInit() {
 	}
 	rootCmd.SetHelpFunc(newHelpCmd)
 
-	// certstreamCmd command help
-	helpCertstreamCmd := certstreamCmd.HelpFunc()
-	newCertstreamHelpCmd := func(c *cobra.Command, args []string) {
-		helpFlag = true
-		helpCertstreamCmd(c, args)
-	}
-	certstreamCmd.SetHelpFunc(newCertstreamHelpCmd)
-
 	// domainCmd command help
 	helpDomainCmd := domainCmd.HelpFunc()
 	newDomainHelpCmd := func(c *cobra.Command, args []string) {
@@ -152,7 +127,6 @@ func PreInit() {
 	keywordCmd.SetHelpFunc(newKeywordHelpCmd)
 
 	// Add subcommands
-	rootCmd.AddCommand(certstreamCmd)
 	rootCmd.AddCommand(domainCmd)
 	rootCmd.AddCommand(keywordCmd)
 
@@ -164,34 +138,6 @@ func PreInit() {
 
 	if helpFlag {
 		os.Exit(0)
-	}
-}
-
-// StreamCerts takes input from certstream and stores it in the queue
-func StreamCerts() {
-	// The false flag specifies that we don't want heartbeat messages.
-	stream, errStream := certstream.CertStreamEventStream(false)
-
-	for {
-		select {
-		case jq := <-stream:
-			domain, err2 := jq.String("data", "leaf_cert", "subject", "CN")
-
-			if err2 != nil {
-				if !strings.Contains(err2.Error(), "Error decoding jq string") {
-					continue
-				}
-				log.Print(err2)
-			}
-
-			log.Printf("Domain: %s", domain)
-			//log.Print(jq)
-
-			dQ.Put(domain)
-
-		case err := <-errStream:
-			log.Print(err)
-		}
 	}
 }
 
@@ -376,14 +322,9 @@ func CheckPermutations() {
 				defer resp.Body.Close()
 
 				if resp.StatusCode == 200 {
-					log.Printf("\033[32m\033[1mPUBLIC\033[39m\033[0m %s (\033[33mhttp://%s.%s\033[39m)", loc, pd.Domain.Domain, pd.Domain.Suffix)
-				} else if resp.StatusCode == 403 {
-					log.Printf("\033[31m\033[1mFORBIDDEN\033[39m\033[0m http://%s (\033[33mhttp://%s.%s\033[39m)", pd.Permutation, pd.Domain.Domain, pd.Domain.Suffix)
+					log.Printf("[PUBLIC] %s.%s.%s", loc, pd.Domain.Domain, pd.Domain.Suffix)
 				}
-			} else if resp.StatusCode == 403 {
-				log.Printf("\033[31m\033[1mFORBIDDEN\033[39m\033[0m http://%s (\033[33mhttp://%s.%s\033[39m)", pd.Permutation, pd.Domain.Domain, pd.Domain.Suffix)
 			} else if resp.StatusCode == 503 {
-				log.Print("too fast")
 				permutatedQ.Put(pd)
 			}
 
@@ -483,14 +424,9 @@ func CheckKeywordPermutations() {
 				defer resp.Body.Close()
 
 				if resp.StatusCode == 200 {
-					log.Printf("\033[32m\033[1mPUBLIC\033[39m\033[0m %s (\033[33m%s\033[39m)", loc, pd.Keyword)
-				} else if resp.StatusCode == 403 {
-					log.Printf("\033[31m\033[1mFORBIDDEN\033[39m\033[0m %s (\033[33m%s\033[39m)", loc, pd.Keyword)
+					log.Printf("[PUBLIC] %s [%s]", loc, pd.Keyword)
 				}
-			} else if resp.StatusCode == 403 {
-				log.Printf("\033[31m\033[1mFORBIDDEN\033[39m\033[0m http://%s (\033[33m%s\033[39m)", pd.Permutation, pd.Keyword)
 			} else if resp.StatusCode == 503 {
-				log.Print("too fast")
 				permutatedQ.Put(pd)
 			}
 
@@ -616,31 +552,6 @@ func main() {
 	PreInit()
 
 	switch action {
-	case "CERTSTREAM":
-		log.Print("Initializing....")
-		Init()
-
-		go PrintJob()
-
-		log.Print("Starting to stream certs....")
-		go StreamCerts()
-
-		log.Print("Starting to process queue....")
-		go ProcessQueue()
-
-		log.Print("Starting to stream certs....")
-		go PermutateDomainRunner()
-
-		log.Print("Starting to process permutations....")
-		go CheckPermutations()
-
-		for {
-			if exit {
-				break
-			}
-
-			time.Sleep(3 * time.Second)
-		}
 	case "DOMAIN":
 		Init()
 
@@ -745,7 +656,7 @@ func main() {
 				exit = true
 			}
 		}
-	case "NADA":
+	default:
 		log.Print("Check help")
 		os.Exit(0)
 	}
