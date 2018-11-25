@@ -21,20 +21,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"runtime"
 	"strings"
 	"time"
 
-	"golang.org/x/net/idna"
+	"github.com/spf13/cobra"
 
 	"github.com/CaliDog/certstream-go"
-	"github.com/Workiva/go-datastructures/queue"
 	"github.com/jmoiron/jsonq"
 	"github.com/joeguo/tldextract"
-	"github.com/spf13/cobra"
+	"golang.org/x/net/idna"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/Workiva/go-datastructures/queue"
 )
 
 var exit bool
@@ -181,16 +182,16 @@ func StreamCerts() {
 				if !strings.Contains(err2.Error(), "Error decoding jq string") {
 					continue
 				}
-				log.Print(err2)
+				log.Error(err2)
 			}
 
-			log.Printf("Domain: %s", domain)
-			//log.Print(jq)
+			//log.Infof("Domain: %s", domain)
+			//log.Info(jq)
 
 			dQ.Put(domain)
 
 		case err := <-errStream:
-			log.Print(err)
+			log.Error(err)
 		}
 	}
 }
@@ -201,16 +202,16 @@ func ProcessQueue() {
 		cn, err := dQ.Get(1)
 
 		if err != nil {
-			log.Print(err)
+			log.Error(err)
 			continue
 		}
 
-		//log.Printf("Domain: %s", cn[0].(string))
+		//log.Infof("Domain: %s", cn[0].(string))
 
 		if !strings.Contains(cn[0].(string), "cloudflaressl") && !strings.Contains(cn[0].(string), "xn--") && len(cn[0].(string)) > 0 && !strings.HasPrefix(cn[0].(string), "*.") && !strings.HasPrefix(cn[0].(string), ".") {
 			punyCfgDomain, err := idna.ToASCII(cn[0].(string))
 			if err != nil {
-				log.Print(err)
+				log.Error(err)
 			}
 
 			result := extract.Extract(punyCfgDomain)
@@ -224,16 +225,14 @@ func ProcessQueue() {
 			}
 
 			if punyCfgDomain != cn[0].(string) {
-				err := fmt.Sprintf("%s is (punycode); AWS does not support internationalized buckets", cn[0].(string))
-				log.Print(err)
+				log.Infof("%s is %s (punycode); AWS does not support internationalized buckets", cn[0].(string), punyCfgDomain)
+				continue
 			}
 
-			if err == nil {
-				dbQ.Put(d)
-			}
-
-			log.Printf("CN: %s\tDomain: %s", cn[0].(string), d)
+			dbQ.Put(d)
 		}
+
+		//log.Infof("CN: %s\tDomain: %s", cn[0].(string), domain)
 	}
 }
 
@@ -243,13 +242,13 @@ func PermutateDomainRunner() {
 		dstruct, err := dbQ.Get(1)
 
 		if err != nil {
-			log.Print(err)
+			log.Error(err)
 			continue
 		}
 
-		var d = dstruct[0].(Domain)
+		var d Domain = dstruct[0].(Domain)
 
-		//log.Printf("CN: %s\tDomain: %s.%s", d.CN, d.Domain, d.Suffix)
+		//log.Infof("CN: %s\tDomain: %s.%s", d.CN, d.Domain, d.Suffix)
 
 		pd := PermutateDomain(d.Domain, d.Suffix)
 
@@ -268,13 +267,13 @@ func PermutateKeywordRunner() {
 		dstruct, err := dbQ.Get(1)
 
 		if err != nil {
-			log.Print(err)
+			log.Error(err)
 			continue
 		}
 
-		var d = dstruct[0].(string)
+		var d string = dstruct[0].(string)
 
-		//log.Printf("CN: %s\tDomain: %s.%s", d.CN, d.Domain, d.Suffix)
+		//log.Infof("CN: %s\tDomain: %s.%s", d.CN, d.Domain, d.Suffix)
 
 		pd := PermutateKeyword(d)
 
@@ -289,7 +288,7 @@ func PermutateKeywordRunner() {
 
 // CheckPermutations runs through all permutations checking them for PUBLIC/FORBIDDEN buckets
 func CheckPermutations() {
-	var max = runtime.NumCPU() * 5
+	var max = runtime.NumCPU() * 10
 	sem = make(chan int, max)
 
 	for {
@@ -297,7 +296,7 @@ func CheckPermutations() {
 		dom, err := permutatedQ.Get(1)
 
 		if err != nil {
-			log.Print(err)
+			log.Error(err)
 		}
 
 		tr := &http.Transport{
@@ -319,7 +318,7 @@ func CheckPermutations() {
 
 			if err != nil {
 				if !strings.Contains(err.Error(), "time") {
-					log.Print(err)
+					log.Error(err)
 				}
 
 				permutatedQ.Put(pd)
@@ -328,7 +327,7 @@ func CheckPermutations() {
 			}
 
 			req.Host = pd.Permutation
-			req.Header.Add("Host", req.Host)
+			//req.Header.Add("Host", host)
 
 			resp, err1 := client.Do(req)
 
@@ -339,7 +338,7 @@ func CheckPermutations() {
 					return
 				}
 
-				log.Print(err1)
+				log.Error(err1)
 				permutatedQ.Put(pd)
 				<-sem
 				return
@@ -347,7 +346,7 @@ func CheckPermutations() {
 
 			defer resp.Body.Close()
 
-			//log.Printf("%s (%d)", host, resp.StatusCode)
+			//log.Infof("%s (%d)", host, resp.StatusCode)
 
 			if resp.StatusCode == 307 {
 				loc := resp.Header.Get("Location")
@@ -355,7 +354,7 @@ func CheckPermutations() {
 				req, err := http.NewRequest("GET", loc, nil)
 
 				if err != nil {
-					log.Print(err)
+					log.Error(err)
 				}
 
 				resp, err1 := client.Do(req)
@@ -367,7 +366,7 @@ func CheckPermutations() {
 						return
 					}
 
-					log.Print(err1)
+					log.Error(err1)
 					permutatedQ.Put(pd)
 					<-sem
 					return
@@ -376,19 +375,19 @@ func CheckPermutations() {
 				defer resp.Body.Close()
 
 				if resp.StatusCode == 200 {
-					log.Printf("\033[32m\033[1mPUBLIC\033[39m\033[0m %s (\033[33mhttp://%s.%s\033[39m)", loc, pd.Domain.Domain, pd.Domain.Suffix)
+					log.Infof("\033[32m\033[1mPUBLIC\033[39m\033[0m %s (\033[33mhttp://%s.%s\033[39m)", loc, pd.Domain.Domain, pd.Domain.Suffix)
 				} else if resp.StatusCode == 403 {
-					log.Printf("\033[31m\033[1mFORBIDDEN\033[39m\033[0m http://%s (\033[33mhttp://%s.%s\033[39m)", pd.Permutation, pd.Domain.Domain, pd.Domain.Suffix)
+					log.Infof("\033[31m\033[1mFORBIDDEN\033[39m\033[0m http://%s (\033[33mhttp://%s.%s\033[39m)", pd.Permutation, pd.Domain.Domain, pd.Domain.Suffix)
 				}
 			} else if resp.StatusCode == 403 {
-				log.Printf("\033[31m\033[1mFORBIDDEN\033[39m\033[0m http://%s (\033[33mhttp://%s.%s\033[39m)", pd.Permutation, pd.Domain.Domain, pd.Domain.Suffix)
+				log.Infof("\033[31m\033[1mFORBIDDEN\033[39m\033[0m http://%s (\033[33mhttp://%s.%s\033[39m)", pd.Permutation, pd.Domain.Domain, pd.Domain.Suffix)
 			} else if resp.StatusCode == 503 {
-				log.Print("too fast")
+				log.Info("too fast")
 				permutatedQ.Put(pd)
 			}
 
-			checked++
-			resp.Body.Close()
+			checked = checked + 1
+
 			<-sem
 		}(dom[0].(PermutatedDomain))
 	}
@@ -396,7 +395,7 @@ func CheckPermutations() {
 
 // CheckKeywordPermutations runs through all permutations checking them for PUBLIC/FORBIDDEN buckets
 func CheckKeywordPermutations() {
-	var max = runtime.NumCPU() * 5
+	var max = runtime.NumCPU() * 10
 	sem = make(chan int, max)
 
 	for {
@@ -404,7 +403,7 @@ func CheckKeywordPermutations() {
 		dom, err := permutatedQ.Get(1)
 
 		if err != nil {
-			log.Print(err)
+			log.Error(err)
 		}
 
 		tr := &http.Transport{
@@ -425,7 +424,7 @@ func CheckKeywordPermutations() {
 
 			if err != nil {
 				if !strings.Contains(err.Error(), "time") {
-					log.Print(err)
+					log.Error(err)
 				}
 
 				permutatedQ.Put(pd)
@@ -434,8 +433,7 @@ func CheckKeywordPermutations() {
 			}
 
 			req.Host = pd.Permutation
-			req.Header.Add("Host", req.Host)
-			req.Header.Add("User-Agent", "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2272.96 Mobile Safari/537.36 (compatible; Googlebot/2.1)")
+			//req.Header.Add("Host", host)
 
 			resp, err1 := client.Do(req)
 
@@ -446,7 +444,7 @@ func CheckKeywordPermutations() {
 					return
 				}
 
-				log.Print(err1)
+				log.Error(err1)
 				permutatedQ.Put(pd)
 				<-sem
 				return
@@ -454,7 +452,7 @@ func CheckKeywordPermutations() {
 
 			defer resp.Body.Close()
 
-			//log.Printf("%s (%d)", host, resp.StatusCode)
+			//log.Infof("%s (%d)", host, resp.StatusCode)
 
 			if resp.StatusCode == 307 {
 				loc := resp.Header.Get("Location")
@@ -462,7 +460,7 @@ func CheckKeywordPermutations() {
 				req, err := http.NewRequest("GET", loc, nil)
 
 				if err != nil {
-					log.Print(err)
+					log.Error(err)
 				}
 
 				resp, err1 := client.Do(req)
@@ -474,7 +472,7 @@ func CheckKeywordPermutations() {
 						return
 					}
 
-					log.Print(err1)
+					log.Error(err1)
 					permutatedQ.Put(pd)
 					<-sem
 					return
@@ -483,18 +481,18 @@ func CheckKeywordPermutations() {
 				defer resp.Body.Close()
 
 				if resp.StatusCode == 200 {
-					log.Printf("\033[32m\033[1mPUBLIC\033[39m\033[0m %s (\033[33m%s\033[39m)", loc, pd.Keyword)
+					log.Infof("\033[32m\033[1mPUBLIC\033[39m\033[0m %s (\033[33m%s\033[39m)", loc, pd.Keyword)
 				} else if resp.StatusCode == 403 {
-					log.Printf("\033[31m\033[1mFORBIDDEN\033[39m\033[0m %s (\033[33m%s\033[39m)", loc, pd.Keyword)
+					log.Infof("\033[31m\033[1mFORBIDDEN\033[39m\033[0m %s (\033[33m%s\033[39m)", loc, pd.Keyword)
 				}
 			} else if resp.StatusCode == 403 {
-				log.Printf("\033[31m\033[1mFORBIDDEN\033[39m\033[0m http://%s (\033[33m%s\033[39m)", pd.Permutation, pd.Keyword)
+				log.Infof("\033[31m\033[1mFORBIDDEN\033[39m\033[0m http://%s (\033[33m%s\033[39m)", pd.Permutation, pd.Keyword)
 			} else if resp.StatusCode == 503 {
-				log.Print("too fast")
+				log.Info("too fast")
 				permutatedQ.Put(pd)
 			}
 
-			checked++
+			checked = checked + 1
 
 			<-sem
 		}(dom[0].(Keyword))
@@ -603,10 +601,10 @@ func Init() {
 // PrintJob prints the queue sizes
 func PrintJob() {
 	for {
-		log.Printf("dQ size: %d", dQ.Len())
-		log.Printf("dbQ size: %d", dbQ.Len())
-		log.Printf("permutatedQ size: %d", permutatedQ.Len())
-		log.Printf("Checked: %d", checked)
+		log.Infof("dQ size: %d", dQ.Len())
+		log.Infof("dbQ size: %d", dbQ.Len())
+		log.Infof("permutatedQ size: %d", permutatedQ.Len())
+		log.Infof("Checked: %d", checked)
 
 		time.Sleep(10 * time.Second)
 	}
@@ -617,21 +615,21 @@ func main() {
 
 	switch action {
 	case "CERTSTREAM":
-		log.Print("Initializing....")
+		log.Info("Initializing....")
 		Init()
 
-		go PrintJob()
+		//go PrintJob()
 
-		log.Print("Starting to stream certs....")
+		log.Info("Starting to stream certs....")
 		go StreamCerts()
 
-		log.Print("Starting to process queue....")
+		log.Info("Starting to process queue....")
 		go ProcessQueue()
 
-		log.Print("Starting to stream certs....")
+		//log.Info("Starting to stream certs....")
 		go PermutateDomainRunner()
 
-		log.Print("Starting to process permutations....")
+		log.Info("Starting to process permutations....")
 		go CheckPermutations()
 
 		for {
@@ -639,7 +637,7 @@ func main() {
 				break
 			}
 
-			time.Sleep(3 * time.Second)
+			time.Sleep(1 * time.Second)
 		}
 	case "DOMAIN":
 		Init()
@@ -651,17 +649,17 @@ func main() {
 					log.Fatal(err)
 				}
 
-				log.Printf("Domain %s is %s (punycode)", cfgDomains[i], punyCfgDomain)
+				log.Infof("Domain %s is %s (punycode)", cfgDomains[i], punyCfgDomain)
 
 				if cfgDomains[i] != punyCfgDomain {
-					log.Printf("Internationalized domains cannot be S3 buckets (%s)", cfgDomains[i])
+					log.Errorf("Internationalized domains cannot be S3 buckets (%s)", cfgDomains[i])
 					continue
 				}
 
 				result := extract.Extract(punyCfgDomain)
 
 				if result.Root == "" || result.Tld == "" {
-					log.Printf("%s is not a valid domain", punyCfgDomain)
+					log.Errorf("%s is not a valid domain", punyCfgDomain)
 					continue
 				}
 
@@ -680,13 +678,13 @@ func main() {
 			log.Fatal("Invalid domains format, see help")
 		}
 
-		//log.Print("Starting to process queue....")
-		go ProcessQueue()
+		//log.Info("Starting to process queue....")
+		//go ProcessQueue()
 
-		//log.Print("Starting to stream certs....")
+		//log.Info("Starting to stream certs....")
 		go PermutateDomainRunner()
 
-		log.Print("Starting to process permutations....")
+		log.Info("Starting to process permutations....")
 		go CheckPermutations()
 
 		for {
@@ -721,10 +719,10 @@ func main() {
 			log.Fatal("Invalid keywords format, see help")
 		}
 
-		//log.Print("Starting to stream certs....")
+		//log.Info("Starting to stream certs....")
 		go PermutateKeywordRunner()
 
-		log.Print("Starting to process permutations....")
+		log.Info("Starting to process permutations....")
 		go CheckKeywordPermutations()
 
 		for {
@@ -745,8 +743,8 @@ func main() {
 				exit = true
 			}
 		}
-	case "NADA":
-		log.Print("Check help")
-		os.Exit(0)
+	default:
+		log.Info("Check help with the -h flag")
+		return
 	}
 }
